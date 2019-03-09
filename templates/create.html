@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Create new event</title>
+    <style type="text/css">
+    input, textarea {
+      margin: 0.5em;
+    }
+
+    input[type=text], textarea {
+      width: 50em;
+    }
+    </style>
+  </head>
+  <body>
+    <form method="POST">
+      <input type="text" placeholder="Title" name="title" /><br />
+      <input type="text" placeholder="Link" name="link" /><br />
+      <input type="text" placeholder="Date/Time" name="date_time" /><br />
+      <textarea placeholder="Description" name="description" rows="10"></textarea><br />
+      <input type="password" placeholder="Password" name="password" /><br />
+      <input type="submit" value="Create" />
+    </form>
+  </body>
+</html>

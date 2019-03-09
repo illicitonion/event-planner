@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>{{event.title}}</title>
+  </head>
+  <body>
+    <div>{{organiser_name}} is interested in this event! Are you? Sign up and maybe we can go together :) Or maybe we won't - no commitment!</div>
+    <h2>{{event.date_time}} - <a href="{{event.link}}">{{event.title}}</a></h2>
+    <div>{{{event.description}}}</div>
+    {{#if other_interested.any_interested}}
+    Interested people:
+    <ul>
+    {{#each other_interested.named}}
+      <li>{{this}}</li>
+    {{/each}}
+    {{#if other_interested.unnamed}}
+      <li>{{other_interested.unnamed}} anonymous {{other_interested.unnamed_plurality}}.</li>
+    {{/if}}
+    </ul>
+    {{/if}}
+    <form action="/interested" method="POST" style="margin-top: 2em;">
+      <h3>Interested? If so:</h3>
+      <input type="text" placeholder="Your name" name="name" />
+      <br />
+      Show your name on this page? <input type="checkbox" name="show_name" value="true" />
+      <br />
+      <input type="hidden" name="event_uuid" value="{{event.uuid}}" />
+      <input type="submit" value="I'm interested" />
+    </form>
+  </body>
+</html>
