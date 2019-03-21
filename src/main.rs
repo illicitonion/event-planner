@@ -21,6 +21,9 @@ use uuid::Uuid;
 mod models;
 mod schema;
 
+include!(concat!(env!("OUT_DIR"), "/templates.rs"));
+use templates::index;
+
 #[derive(Deserialize)]
 struct Config {
     port: u32,
@@ -416,12 +419,8 @@ fn redirect(state: &State, to: &str) -> hyper::Response<hyper::Body> {
 }
 
 fn serve_index(state: State) -> (State, hyper::Response<hyper::Body>) {
-    let mut variables = HashMap::new();
-    variables.insert("organiser_name", CONFIG.organiser_name.as_str());
-    let response = match render_template("index.html", &variables) {
-        Ok(body) => create_response(&state, StatusCode::OK, mime::TEXT_HTML_UTF_8, body),
-        Err(err) => err.as_response(&state),
-    };
-
+    let mut buf = Vec::new();
+    index(&mut buf, CONFIG.organiser_name.as_str()).unwrap();
+    let response = create_response(&state, StatusCode::OK, mime::TEXT_HTML_UTF_8, buf);
     (state, response)
 }
