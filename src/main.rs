@@ -1,4 +1,4 @@
-use crate::models::{Event, InterestedPerson};
+pub use crate::models::{Event, InterestedPerson};
 #[macro_use]
 extern crate diesel;
 use diesel::prelude::*;
@@ -8,11 +8,9 @@ use gotham::helpers::http::response::{create_empty_response, create_response};
 use gotham::router::{builder::*, Router};
 use gotham::state::{FromState, State};
 use gotham_derive::{StateData, StaticResponseExtender};
-use handlebars::Handlebars;
 use hyper::StatusCode;
 use lazy_static::lazy_static;
 use serde_derive::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use url::form_urlencoded;
@@ -22,7 +20,6 @@ mod models;
 mod schema;
 
 include!(concat!(env!("OUT_DIR"), "/templates.rs"));
-use templates::index;
 
 #[derive(Deserialize)]
 struct Config {
@@ -30,7 +27,6 @@ struct Config {
     host: String,
     organiser_name: String,
     db_path: PathBuf,
-    templates_dir: PathBuf,
     notify_email: String,
     mailgun_from_name: String,
     mailgun_from_email_prefix: String,
@@ -66,7 +62,7 @@ fn router() -> Router {
 }
 
 #[derive(Default, Serialize)]
-struct InterestedParties {
+pub struct InterestedParties {
     named: Vec<String>,
     unnamed: usize,
     any_interested: bool,
@@ -89,38 +85,26 @@ fn serve_event(state: State) -> (State, hyper::Response<hyper::Body>) {
     (state, response)
 }
 
-fn render_template<Values: serde::Serialize>(
-    template_filename: &str,
-    values: &Values,
-) -> Result<String, Error> {
-    let mut templates = Handlebars::new();
-    templates.set_strict_mode(true);
-    templates
-        .register_template_file("template", CONFIG.templates_dir.join(template_filename))
-        .map_err(Error::TemplateError)?;
-
-    templates
-        .render("template", &values)
-        .map_err(Error::TemplateRenderError)
-}
-
 #[derive(Deserialize, StateData, StaticResponseExtender)]
 struct EventContext {
     event_uuid: Uuid,
 }
 
 impl EventContext {
-    fn render(&self) -> Result<String, Error> {
-        let (mut event, interested_parties) = self.find_event_and_interested_parties()?;
-        event.description = event.description.replace("\n", "<br />");
+    fn render(&self) -> Result<Vec<u8>, Error> {
+        let (event, interested_parties) = self.find_event_and_interested_parties()?;
+        let event_description = templates::Html(event.description.replace("\n", "<br />"));
 
-        let values = json!({
-            "event": event,
-            "other_interested": interested_parties,
-            "organiser_name": CONFIG.organiser_name,
-        });
-
-        render_template("event.html", &values)
+        let mut buf = Vec::new();
+        templates::event(
+            &mut buf,
+            CONFIG.organiser_name.as_str(),
+            &event,
+            &event_description,
+            &interested_parties,
+        )
+        .unwrap();
+        Ok(buf)
     }
 
     fn find_event(&self, conn: &SqliteConnection) -> Result<Event, Error> {
@@ -198,8 +182,6 @@ enum Error {
     EventNotFound(uuid::Uuid),
     MissingFieldError(Vec<String>),
     MailgunError(reqwest::Error),
-    TemplateError(handlebars::TemplateFileError),
-    TemplateRenderError(handlebars::RenderError),
     DatabaseConnection(diesel::ConnectionError),
     Database(diesel::result::Error),
     WrongPassword,
@@ -222,12 +204,9 @@ impl Error {
             EventNotFound(..) => StatusCode::NOT_FOUND,
             MissingFieldError(..) => StatusCode::BAD_REQUEST,
             WrongPassword => StatusCode::UNAUTHORIZED,
-            MailgunError(..)
-            | TemplateError(..)
-            | TemplateRenderError(..)
-            | DatabaseConnection(..)
-            | Database(..)
-            | Inner(..) => StatusCode::INTERNAL_SERVER_ERROR,
+            MailgunError(..) | DatabaseConnection(..) | Database(..) | Inner(..) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         }
     }
 }
@@ -246,8 +225,6 @@ impl std::fmt::Display for Error {
                 fields.join(", ")
             ),
             MailgunError(..) => write!(f, "Error occurred sending email"),
-            TemplateError(..) => write!(f, "Template error"),
-            TemplateRenderError(..) => write!(f, "Template render error"),
             DatabaseConnection(..) => write!(f, "Database connection error"),
             Database(..) => write!(f, "Database error"),
             WrongPassword => write!(f, "Wrong password"),
@@ -346,10 +323,12 @@ fn mailgun_send(name: &str, event_title: &str, event_uuid: &str) -> Result<(), E
 }
 
 fn create_event_page(state: State) -> (State, hyper::Response<hyper::Body>) {
-    let response = match render_template("create.html", &Vec::<String>::new()) {
-        Ok(body) => create_response(&state, StatusCode::OK, mime::TEXT_HTML_UTF_8, body),
-        Err(err) => err.as_response(&state),
-    };
+    let response = create_response(
+        &state,
+        StatusCode::OK,
+        mime::TEXT_HTML_UTF_8,
+        templates::statics::create_html.content,
+    );
 
     (state, response)
 }
@@ -420,7 +399,7 @@ fn redirect(state: &State, to: &str) -> hyper::Response<hyper::Body> {
 
 fn serve_index(state: State) -> (State, hyper::Response<hyper::Body>) {
     let mut buf = Vec::new();
-    index(&mut buf, CONFIG.organiser_name.as_str()).unwrap();
+    templates::index(&mut buf, CONFIG.organiser_name.as_str()).unwrap();
     let response = create_response(&state, StatusCode::OK, mime::TEXT_HTML_UTF_8, buf);
     (state, response)
 }

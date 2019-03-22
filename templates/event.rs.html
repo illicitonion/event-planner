@@ -1,0 +1,36 @@
+@use crate::{Event, InterestedParties};
+
+@(organiser_name: &str, event: &Event, event_description: &Html<String>, other_interested: &InterestedParties)
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>@event.title</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <div>@organiser_name is interested in this event! Are you? Sign up and maybe we can go together :) Or maybe we won't - no commitment!</div>
+    <h2>@event.date_time - <a href="@event.link">@event.title</a></h2>
+    <div>@event_description</div>
+    @if other_interested.any_interested {
+    Interested people:
+    <ul>
+    @for other in &other_interested.named {
+      <li>@other</li>
+    }
+    @if other_interested.unnamed > 0 {
+      <li>@other_interested.unnamed anonymous @other_interested.unnamed_plurality.</li>
+    }
+    </ul>
+    }
+    <form action="/interested" method="POST" style="margin-top: 2em;">
+      <h3>Interested? If so:</h3>
+      <input type="text" placeholder="Your name" name="name" />
+      <br />
+      Show your name on this page? <input type="checkbox" name="show_name" value="true" />
+      <br />
+      <input type="hidden" name="event_uuid" value="@event.uuid" />
+      <input type="submit" value="I'm interested" />
+    </form>
+  </body>
+</html>
