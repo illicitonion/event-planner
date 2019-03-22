@@ -21,6 +21,7 @@ ructe = "0.6.2"
 serde = "1"
 serde_derive = "1"
 serde_urlencoded = "0.5.4"
+serde_with = "1.2"
 url = "1.7.2"
 uuid = { version = "0.7.2", features = ["serde", "v4"] }
 

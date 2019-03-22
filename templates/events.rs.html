@@ -1,0 +1,59 @@
+@use crate::EventData;
+
+@(organiser_name: &str, events: &Vec<EventData>)
+
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Several events</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script type="text/javascript">
+        function updateAll(event) @{
+          document.getElementsByName(event.target.name).forEach(found => @{
+            if (found != event.target) @{
+              found.checked = !found.checked;
+            @}
+          @});
+        @}
+        </script>
+        <style type="text/css">
+        .event @{
+          border: 1px black solid;
+        @}
+        </style>
+    </head>
+    <body>
+    <form action="/interested" method="POST" style="margin-top: 2em;">
+        <div>@organiser_name is interested in these events! Are you? Sign up and maybe we can go together :) Or maybe we won't - no commitment!</div>
+        @for event in events {
+          <div class="event">
+            <h2>@event.event.date_time - <a href="@event.event.link">@event.event.title</a></h2>
+            <div>@event.description</div>
+            @if event.interested_parties.any_interested {
+            Interested people:
+            <ul>
+                @for other in &event.interested_parties.named {
+                <li>@other</li>
+                }
+                @if event.interested_parties.unnamed > 0 {
+                <li>@event.interested_parties.unnamed anonymous @event.interested_parties.unnamed_plurality.</li>
+                }
+            </ul>
+            }
+            Are you interested? (make sure to submit at the bottom!) <input type="checkbox" name="event-@event.event.uuid" value="true" onclick="updateAll(event);" />
+          </div>
+        }
+        <hr />
+        <h3>Interested in things? Please fill this out:</h3>
+        <input type="text" placeholder="Your name" name="name" />
+        <br />
+        Show your name on this page? <input type="checkbox" name="show_name" value="true" />
+        <br />
+        @for event in events {
+          @event.event.date_time: @event.event.title <input type="checkbox" name="event-@event.event.uuid" value="true" onclick="updateAll(event);" />
+          <br />
+        }
+        <input type="submit" value="I'm interested" />
+    </form>
+    </body>
+    </html>

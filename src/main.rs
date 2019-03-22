@@ -51,9 +51,15 @@ fn router() -> Router {
     build_simple_router(|route| {
         route.get("/").to(serve_index);
         route
-            .get("/event/:event_uuid")
-            .with_path_extractor::<EventContext>()
-            .to(serve_event);
+            .get("/event/:event_uuids")
+            .with_path_extractor::<EventsContext>()
+            .to(serve_events);
+
+        route
+            .get("/events/:event_uuids")
+            .with_path_extractor::<EventsContext>()
+            .to(serve_events);
+
         route.post("/interested").to(mark_interested);
 
         route.get("/event/create").to(create_event_page);
@@ -74,8 +80,8 @@ fn connect() -> Result<SqliteConnection, Error> {
         .map_err(Error::DatabaseConnection)
 }
 
-fn serve_event(state: State) -> (State, hyper::Response<hyper::Body>) {
-    let event_context = EventContext::borrow_from(&state);
+fn serve_events(state: State) -> (State, hyper::Response<hyper::Body>) {
+    let event_context = EventsContext::borrow_from(&state);
 
     let response = match event_context.render() {
         Ok(body) => create_response(&state, StatusCode::OK, mime::TEXT_HTML_UTF_8, body),
@@ -86,44 +92,71 @@ fn serve_event(state: State) -> (State, hyper::Response<hyper::Body>) {
 }
 
 #[derive(Deserialize, StateData, StaticResponseExtender)]
-struct EventContext {
-    event_uuid: Uuid,
+struct EventsContext {
+    #[serde(with = "serde_with::rust::StringWithSeparator::<serde_with::CommaSeparator>")]
+    event_uuids: Vec<Uuid>,
 }
 
-impl EventContext {
+impl EventsContext {
     fn render(&self) -> Result<Vec<u8>, Error> {
-        let (event, interested_parties) = self.find_event_and_interested_parties()?;
-        let event_description = templates::Html(event.description.replace("\n", "<br />"));
-
-        let mut buf = Vec::new();
-        templates::event(
-            &mut buf,
-            CONFIG.organiser_name.as_str(),
-            &event,
-            &event_description,
-            &interested_parties,
-        )
-        .unwrap();
-        Ok(buf)
+        match &self.event_uuids[..] {
+            [] => Err(Error::MissingFieldError(vec!["event id".to_owned()])),
+            [event_uuid] => {
+                let (event, interested_parties) =
+                    Self::find_event_and_interested_parties(*event_uuid)?;
+                let event_description = templates::Html(event.description.replace("\n", "<br />"));
+                let mut buf = Vec::new();
+                templates::event(
+                    &mut buf,
+                    CONFIG.organiser_name.as_str(),
+                    &event,
+                    &event_description,
+                    &interested_parties,
+                )
+                .unwrap();
+                Ok(buf)
+            }
+            event_uuids => {
+                let events: Result<Vec<_>, _> = event_uuids
+                    .iter()
+                    .map(|event_uuid| {
+                        let (event, interested_parties) =
+                            Self::find_event_and_interested_parties(*event_uuid)?;
+                        let description =
+                            templates::Html(event.description.replace("\n", "<br />"));
+                        Ok(EventData {
+                            event,
+                            description,
+                            interested_parties,
+                        })
+                    })
+                    .collect();
+                let mut buf = Vec::new();
+                templates::events(&mut buf, CONFIG.organiser_name.as_str(), &events?).unwrap();
+                Ok(buf)
+            }
+        }
     }
 
-    fn find_event(&self, conn: &SqliteConnection) -> Result<Event, Error> {
+    fn find_event(conn: &SqliteConnection, event_uuid: Uuid) -> Result<Event, Error> {
         use self::schema::events::dsl::{events, uuid};
         events
-            .filter(uuid.eq(format!("{}", self.event_uuid)))
+            .filter(uuid.eq(format!("{}", event_uuid)))
             .first(conn)
             .map_err(|err| match err {
-                diesel::result::Error::NotFound => Error::EventNotFound(self.event_uuid),
+                diesel::result::Error::NotFound => Error::EventNotFound(event_uuid),
                 err => Error::Database(err),
             })
     }
 
-    fn find_event_and_interested_parties(&self) -> Result<(Event, InterestedParties), Error> {
+    fn find_event_and_interested_parties(
+        event_uuid: Uuid,
+    ) -> Result<(Event, InterestedParties), Error> {
         let conn = connect()?;
 
         use self::schema::interested_persons::dsl::{event_id, interested_persons};
 
-        self.find_event(&conn).and_then(|event| {
+        Self::find_event(&conn, event_uuid).and_then(|event| {
             let people = interested_persons
                 .filter(event_id.eq(event.id))
                 .load::<InterestedPerson>(&conn)
@@ -147,10 +180,16 @@ impl EventContext {
     }
 }
 
+pub struct EventData {
+    event: Event,
+    description: templates::Html<String>,
+    interested_parties: InterestedParties,
+}
+
 struct InterestedContext {
     name: String,
     show_name: bool,
-    event_uuid: String,
+    event_uuids: Vec<String>,
 }
 
 impl InterestedContext {
@@ -158,22 +197,25 @@ impl InterestedContext {
         let mut form_data = form_urlencoded::parse(&buf)
             .into_owned()
             .collect::<HashMap<_, _>>();
-        match (form_data.remove("name"), form_data.remove("event_uuid")) {
-            (Some(name), Some(event_uuid)) => Ok(InterestedContext {
-                name,
-                show_name: form_data
-                    .get("show_name")
-                    .map(|value| value.as_str() == "true")
-                    .unwrap_or(false),
-                event_uuid,
-            }),
-            (Some(_name), None) => Err(Error::MissingFieldError(vec!["event_id".to_owned()])),
-            (None, Some(_event_id)) => Err(Error::MissingFieldError(vec!["name".to_owned()])),
-            (None, None) => Err(Error::MissingFieldError(vec![
-                "event_id".to_owned(),
-                "name".to_owned(),
-            ])),
-        }
+        let (name, show_name) = if let Some(name) = form_data.remove("name") {
+            let show_name = form_data
+                .get("show_name")
+                .map(|value| value.as_str() == "true")
+                .unwrap_or(false);
+            (name, show_name)
+        } else {
+            return Err(Error::MissingFieldError(vec!["name".to_owned()]));
+        };
+        let event_uuids = form_data
+            .drain()
+            .filter(|(key, value)| key.starts_with("event-") && value == "true")
+            .map(|(key, _)| key[6..].to_owned())
+            .collect();
+        Ok(InterestedContext {
+            name,
+            show_name,
+            event_uuids,
+        })
     }
 }
 
@@ -238,8 +280,13 @@ fn mark_interested(mut state: State) -> Box<HandlerFuture> {
         .concat2()
         .then(|body| match body {
             Ok(body) => match mark_interested_inner(body.into_bytes()) {
-                Ok(event_id) => {
-                    let response = redirect(&state, &format!("/event/{}", event_id));
+                Ok(event_ids) => {
+                    let response = if event_ids.len() == 1 {
+                        redirect(&state, &format!("/event/{}", event_ids[0]))
+                    } else {
+                        redirect(&state, &format!("/events/{}", event_ids.join(",")))
+                    };
+
                     Ok((state, response))
                 }
                 Err(err) => {
@@ -255,39 +302,39 @@ fn mark_interested(mut state: State) -> Box<HandlerFuture> {
     Box::new(f)
 }
 
-fn mark_interested_inner(body: bytes::Bytes) -> Result<String, Error> {
+fn mark_interested_inner(body: bytes::Bytes) -> Result<Vec<String>, Error> {
     let interested_context = InterestedContext::from_form_body(body)?;
     let name = interested_context.name.clone();
-    let event_uuid = interested_context.event_uuid.clone();
+    for event_uuid in interested_context.event_uuids.iter().cloned() {
+        let event = {
+            let conn = connect()?;
 
-    let event = {
-        let conn = connect()?;
+            let event = EventsContext::find_event(
+                &conn,
+                event_uuid
+                    .parse()
+                    .map_err(|err| Error::Inner(Box::new(err)))?,
+            )?;
 
-        let event_context = EventContext {
-            event_uuid: event_uuid
-                .parse()
-                .map_err(|err| Error::Inner(Box::new(err)))?,
+            use self::schema::interested_persons::dsl::{
+                event_id, interested_persons, name, show_name,
+            };
+            use diesel::dsl::insert_into;
+
+            insert_into(interested_persons)
+                .values((
+                    name.eq(interested_context.name.clone()),
+                    show_name.eq(interested_context.show_name.clone()),
+                    event_id.eq(event.id),
+                ))
+                .execute(&conn)
+                .map_err(Error::Database)?;
+            event
         };
-        let event = event_context.find_event(&conn)?;
 
-        use self::schema::interested_persons::dsl::{
-            event_id, interested_persons, name, show_name,
-        };
-        use diesel::dsl::insert_into;
-
-        insert_into(interested_persons)
-            .values((
-                name.eq(interested_context.name),
-                show_name.eq(interested_context.show_name),
-                event_id.eq(event.id),
-            ))
-            .execute(&conn)
-            .map_err(Error::Database)?;
-        event
-    };
-
-    mailgun_send(&name, &event.title, &event_uuid)?;
-    Ok(event_uuid)
+        mailgun_send(&name, &event.title, &event_uuid)?;
+    }
+    Ok(interested_context.event_uuids)
 }
 
 fn mailgun_send(name: &str, event_title: &str, event_uuid: &str) -> Result<(), Error> {
