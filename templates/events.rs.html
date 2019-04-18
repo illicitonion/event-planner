@@ -28,10 +28,10 @@
         @for event in events {
           <div class="event">
             <h2>@event.event.date_time - <a href="@event.event.link">@event.event.title</a></h2>
-            <div>@event.description</div>
+            <div style="margin-bottom: 1em;">@event.description</div>
             @if event.interested_parties.any_interested {
             Interested people:
-            <ul>
+            <ul style="margin-bottom: 1em;">
                 @for other in &event.interested_parties.named {
                 <li>@other</li>
                 }
@@ -40,7 +40,7 @@
                 }
             </ul>
             }
-            Are you interested? (make sure to submit at the bottom!) <input type="checkbox" name="event-@event.event.uuid" value="true" onclick="updateAll(event);" />
+            <strong >Are you interested? (make sure to submit at the bottom!)</strong> <input type="checkbox" name="event-@event.event.uuid" value="true" onclick="updateAll(event);" />
           </div>
         }
         <hr />
